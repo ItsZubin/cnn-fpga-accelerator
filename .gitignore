@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Deny-by-default. This repo is intended to contain ONLY hand-written RTL,
+# constraints, scripts and docs. Everything else is ignored, then a short
+# allowlist re-includes the files we actually publish.
+#
+# Rationale: this design was developed in an environment covered by an NDA.
+# Vivado build artifacts embed absolute paths, machine names and account IDs,
+# so they must never be committed. Deny-by-default means a stray copy into
+# this tree is ignored rather than silently published.
+# ---------------------------------------------------------------------------
+
+*
+
+# --- allowlist -------------------------------------------------------------
+!.gitignore
+!README.md
+!*/
+
+!rtl/**/*.sv
+!tb/**/*.sv
+!constraints/**/*.xdc
+!scripts/**/*.tcl
+!docs/**/*.md
+
+# --- explicit denials (defence in depth; these win over the allowlist) ------
+
+# Xilinx IP cores and everything they generate.
+# The four dist_mem_gen instances are Xilinx-licensed IP and are NOT
+# redistributed here. See README "Rebuilding" for how to regenerate them.
+ip/
+**/*.xci
+**/*.xcix
+**/*.veo
+**/*.vho
+**/*.dcp
+
+# Vivado project + run directories (contain absolute paths and account IDs)
+*.xpr
+*.jou
+*.log
+*.str
+*.wdf
+*.rpt
+*.pb
+*.dmp
+*.bit
+*.ltx
+*.wcfg
+.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+
+# Memory initialisation data (trained weights + test images).
+# Withheld pending confirmation that the data is not NDA-covered.
+# See README "What is deliberately not here".
+*.coe
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*~
+*.swp
