@@ -23,17 +23,24 @@
 !scripts/**/*.sh
 !docs/**/*.md
 
+# Xilinx IP *source* definitions only. The .xci is the configuration Vivado
+# regenerates the core from -- it is stock Distributed Memory Generator setup,
+# not proprietary content. Generated output products stay excluded below.
+!ip/**/*.xci
+
 # --- explicit denials (defence in depth; these win over the allowlist) ------
 
-# Xilinx IP cores and everything they generate.
-# The four dist_mem_gen instances are Xilinx-licensed IP and are NOT
-# redistributed here. See README "Rebuilding" for how to regenerate them.
-ip/
-**/*.xci
+# Generated IP output products. The .xci sources are committed (allowlisted
+# above); everything Vivado derives from them is not -- it is regenerable and
+# embeds build-machine paths.
 **/*.xcix
 **/*.veo
 **/*.vho
 **/*.dcp
+ip/**/synth/
+ip/**/sim/
+ip/**/hdl/
+ip/**/*.xml
 
 # Vivado project + run directories (contain absolute paths and account IDs)
 *.xpr

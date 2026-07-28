@@ -124,9 +124,10 @@ runner exits non-zero on any failure, so it drops straight into CI.
 ./scripts/run_sim.sh tb_pe    # just one
 ```
 
-Uses Vivado's `xsim` if present, otherwise Icarus Verilog. **No Xilinx IP is
-needed** — `tb/dist_mem_gen_model.sv` provides behavioural stand-ins for the
-four distributed-RAM cores, so a clean clone simulates as-is.
+Uses Vivado's `xsim` if present, otherwise Icarus Verilog. **No IP generation
+is needed** — `tb/dist_mem_gen_model.sv` provides behavioural stand-ins for the
+four distributed-RAM cores, so the suite runs without invoking Vivado and
+without the `.coe` files the real cores expect.
 
 | Testbench | Scope | Method |
 |---|---|---|
@@ -174,40 +175,42 @@ parameters need to follow.
 
 Requires Vivado 2024.1 and a Nexys4 DDR board.
 
-The four `dist_mem_gen` distributed-RAM cores are **Xilinx IP and are not
-redistributed here.** Regenerate them through the IP catalog before building:
-
-| Instance | Configuration |
-|---|---|
-| `dist_mem_gen_0` .. `dist_mem_gen_3` | Distributed Memory Generator, **single-port RAM**, depth **16**, data width **64** |
-
-Each instance is initialised from a `.coe` memory-initialisation file — see
-*What is deliberately not here*.
-
 ```tcl
 # from the repo root
 vivado -mode batch -source scripts/create_project.tcl
 ```
 
-The script creates the project, adds the RTL, testbench and constraints, and
-sets `top` as the top module. Add the four regenerated IP cores and your
-`.coe` files, then run synthesis and implementation.
+The script creates the project, adds the RTL, testbenches, constraints and the
+four IP cores, and sets `top` as the top module.
+
+### IP cores
+
+`ip/dist_mem_gen_{0..3}/` contains the Vivado IP configurations — stock
+Distributed Memory Generator instances, **single-port RAM, depth 16, data
+width 64**. Vivado regenerates the cores from these `.xci` files on first
+build; the generated output products are not committed, since they are
+derived and embed build-machine paths.
+
+Each core is initialised from a `.coe` memory-initialisation file
+(`img_00026_ram0..3.coe`). **Those files are not in this repository** — see
+below — so IP generation will report a missing coefficient file until they are
+supplied. Point each core at your own `.coe`, or clear the initialisation
+field to build with zeroed memory.
 
 ---
 
 ## What is deliberately not here
 
-This design was developed in an environment covered by a non-disclosure
-agreement. The following are excluded on purpose, and `.gitignore` is
-deny-by-default so they cannot be added by accident:
+`.gitignore` is deny-by-default, so nothing reaches the repository unless it
+has been explicitly allowed:
 
-- **Xilinx IP cores** (`dist_mem_gen_*`) and all generated output products —
-  licensed IP, regenerable from the parameters above.
+- **Generated IP output products** — regenerable from the committed `.xci`
+  files, and they embed build-machine paths.
 - **The Vivado project, run and simulation directories** — these embed
   absolute filesystem paths and the originating account ID.
 - **`.coe` memory-initialisation files** — the trained weights and test
-  images. Withheld pending confirmation that this data is not covered by the
-  NDA. Without them the design builds but has nothing to infer on.
+  images. Without them the design builds but has nothing to infer on, and IP
+  generation will flag the missing coefficient files.
 
 ---
 

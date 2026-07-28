@@ -7,9 +7,10 @@
 # and the originating account ID. Regenerating it from this script keeps the
 # repository free of machine-specific data and makes the build reproducible.
 #
-# NOTE: the four dist_mem_gen IP cores are NOT recreated here (Xilinx IP is
-# not redistributed with this repo). Add them via the IP catalog afterwards --
-# single-port RAM, depth 16, data width 64, one .coe per instance.
+# The four dist_mem_gen IP cores are added from their committed .xci files.
+# Vivado regenerates the cores on first build. Each .xci names a .coe
+# initialisation file that is not committed, so generation will report a
+# missing coefficient file until you supply your own.
 # ---------------------------------------------------------------------------
 
 set proj_name  "cnn_accelerator"
@@ -38,6 +39,16 @@ foreach tb_file [glob $repo_root/tb/*.sv] {
     add_files -fileset sim_1 -norecurse $tb_file
 }
 set_property file_type SystemVerilog [get_files -of_objects [get_filesets sim_1]]
+
+# --- Xilinx IP -------------------------------------------------------------
+set xci_files [glob -nocomplain $repo_root/ip/*/*.xci]
+if {[llength $xci_files] > 0} {
+    read_ip $xci_files
+    generate_target all [get_ips]
+    puts "added [llength $xci_files] IP core(s)"
+} else {
+    puts "WARNING: no .xci files found under ip/"
+}
 
 # --- Constraints -----------------------------------------------------------
 # CNN_top.xdc is the active constraint set (clk / rst / start_ext).
