@@ -24,8 +24,19 @@ create_project $proj_name $build_dir -part $part -force
 add_files -norecurse [glob $repo_root/rtl/*.sv]
 set_property file_type SystemVerilog [get_files *.sv]
 
-# --- Testbench -------------------------------------------------------------
-add_files -fileset sim_1 -norecurse [glob $repo_root/tb/*.sv]
+# --- Testbenches -------------------------------------------------------------
+# dist_mem_gen_model.sv is excluded here on purpose: it defines modules named
+# dist_mem_gen_0..3, which would collide with the real Xilinx IP once that is
+# added to the project. Add it to the sim fileset only if you want to simulate
+# without generating the IP:
+#
+#   add_files -fileset sim_1 -norecurse $repo_root/tb/dist_mem_gen_model.sv
+#
+# scripts/run_sim.sh always includes it, since standalone simulation has no IP.
+foreach tb_file [glob $repo_root/tb/*.sv] {
+    if {[file tail $tb_file] eq "dist_mem_gen_model.sv"} { continue }
+    add_files -fileset sim_1 -norecurse $tb_file
+}
 set_property file_type SystemVerilog [get_files -of_objects [get_filesets sim_1]]
 
 # --- Constraints -----------------------------------------------------------

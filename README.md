@@ -46,7 +46,7 @@ memory), leaving the hard blocks available for whatever else shares the chip.
 flowchart LR
     A["8x8 binarised<br/>input feature map<br/>(4x distributed RAM)"] --> B
     B["Convolution<br/>4 parallel PEs<br/>2x2 kernel, 4-bit signed w"] --> C
-    C["Accumulator<br/>8-bit signed<br/>+ saturation"] --> D
+    C["Accumulator<br/>sign-magnitude sum<br/>clipped to 4-bit signed"] --> D
     D["ReLU<br/>-> 4-bit"] --> E
     E["Max pooling<br/>2x2 -> 16 values"] --> F
     F["FC1<br/>16 -> 3<br/>48 weights"] --> G
@@ -61,7 +61,7 @@ successor rather than running off a global schedule.
 
 | File | Role |
 |---|---|
-| `rtl/PE.sv` | Processing element — 4-tap MAC, 1-bit activations x 4-bit signed weights, saturating to 8-bit |
+| `rtl/PE.sv` | Processing element — 4-tap MAC, 1-bit activations x 4-bit signed weights, registered 8-bit signed result |
 | `rtl/PE_TOP.sv` | Four PEs in parallel with shared window addressing |
 | `rtl/Acc.sv` | Partial-sum accumulation across sliding-window positions |
 | `rtl/CONV_Controller.sv` | Convolution sequencing — window position, memory addressing, handshakes |
@@ -73,7 +73,7 @@ successor rather than running off a global schedule.
 | `rtl/network_top.sv` | Wires conv -> pool -> FC into the network datapath |
 | `rtl/top.sv` | Board-level top: start-pulse FSM, output registering |
 | `rtl/top_initialize.sv` | Weight/feature-map load sequencing at reset |
-| `tb/tb_top.sv` | Testbench (see *Verification status* — this is currently a smoke test) |
+| `tb/` | Five self-checking testbenches + behavioural RAM models — see *Verification* |
 
 ---
 
@@ -113,16 +113,60 @@ meaningfully past 100 MHz would need that path pipelined.
 
 ---
 
-## Verification status
+## Verification
 
-**Being straight about this: `tb/tb_top.sv` is a smoke test, not a
-verification suite.** It drives reset, pulses `start`, and lets the design run.
-It contains no assertions, no golden reference, and no pass/fail report — so it
-demonstrates that the design elaborates, simulates and builds, and nothing more
-than that.
+Five self-checking testbenches. Each compares the DUT against an independent
+reference model and prints an explicit `RESULT: PASS` / `RESULT: FAIL`; the
+runner exits non-zero on any failure, so it drops straight into CI.
 
-Functional correctness of the network output is therefore **not** established
-by anything in this repository. It is the top item on the roadmap below.
+```bash
+./scripts/run_sim.sh          # all testbenches
+./scripts/run_sim.sh tb_pe    # just one
+```
+
+Uses Vivado's `xsim` if present, otherwise Icarus Verilog. **No Xilinx IP is
+needed** — `tb/dist_mem_gen_model.sv` provides behavioural stand-ins for the
+four distributed-RAM cores, so a clean clone simulates as-is.
+
+| Testbench | Scope | Method |
+|---|---|---|
+| `tb_relu.sv` | `RELU_v1` | **Exhaustive** — all 32 reachable input states |
+| `tb_pe.sv` | `PE` | Directed edge cases + all 61 window positions + 2000 randomised, against an independent reference |
+| `tb_acc.sv` | `Acc` | Directed clipping/cancellation cases + 4000 randomised; reference computes the plain signed sum, so it checks the sign-magnitude implementation rather than restating it |
+| `tb_pooling.sv` | `Pooling_TOP` | Full 15-row frame, per-bin maximum scoreboard, output-count and range properties |
+| `tb_top.sv` | `top` | Protocol and liveness: clean reset, response to `start`, bounded-time valid, no X/Z on outputs |
+
+### What is still not proven
+
+`tb_top.sv` deliberately does **not** check the classification result. The
+trained weights and test images live in the `.coe` files, which are not in this
+repository, so there is nothing to infer on and no golden output to compare
+against. Numerical end-to-end correctness is therefore still open, and is the
+top roadmap item.
+
+### Known issue: pooling bin boundaries
+
+`tb_pooling.sv` documents a discrepancy it found in `Pooling_TOP`. The four
+accumulation bins are not uniform:
+
+| Bin | Accumulates `count_PE` | Positions | Emitted at |
+|---|---|---|---|
+| 1 | 0–15 | 16 | 16 |
+| 2 | 16–30 | 15 | 32 |
+| 3 | 31–45 | 15 | 48 |
+| 4 | 46–60 | 15 | 60 |
+
+Bin 1 covers one more position than the others, and bins 2 and 3 stop
+accumulating well before the point at which they are emitted — so positions 31
+and 32 fall into bin 3 even though bin 2 has not yet been read out. The RTL
+also writes bin 4's lower bound as `>= 45` while bin 3 already claims 45; the
+`if`/`else if` chain resolves that in bin 3's favour, so nothing is
+double-counted, but it looks like a typo for 46.
+
+The testbench encodes the behaviour **as implemented**, so it passes and works
+as a regression test, and raises warnings pointing at the boundaries. If the
+intent was uniform 2×2 pooling, the RTL needs a fix and the testbench
+parameters need to follow.
 
 ---
 
@@ -169,8 +213,9 @@ deny-by-default so they cannot be added by accident:
 
 ## Roadmap
 
-- [ ] **Self-checking testbench** — golden reference model, per-layer
-      comparison, explicit pass/fail
+- [ ] **End-to-end golden reference** — behavioural model of the quantised
+      network, compared against the hardware output bit (needs the `.coe` data)
+- [ ] Resolve the pooling bin boundaries documented above
 - [ ] Constrain `output_ext` / `valid_output_ext` to real pins (currently
       auto-placed by the tool)
 - [ ] Pipeline the accumulator critical path to lift the 100 MHz ceiling

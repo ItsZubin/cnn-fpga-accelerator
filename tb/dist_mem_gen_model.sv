@@ -1,0 +1,95 @@
+// ---------------------------------------------------------------------------
+// Behavioural stand-in for the Xilinx Distributed Memory Generator.
+//
+// The real dist_mem_gen_0..3 cores are Xilinx IP and are not redistributed
+// with this repository. These models present the same port interface
+// (a / d / clk / we / spo) and the same configuration -- single-port RAM,
+// depth 16, data width 64 -- so the design can be simulated from a clean
+// clone without a Vivado IP catalog.
+//
+// SIMULATION ONLY. Do not add these to the synthesis fileset; for hardware
+// builds, regenerate the real IP as described in the README.
+//
+// Behaviour modelled: write-synchronous, read-asynchronous. `spo` follows the
+// addressed location combinationally, matching dist_mem_gen with a
+// non-registered output.
+// ---------------------------------------------------------------------------
+
+`timescale 1ns/1ps
+
+module dist_mem_gen_model #(
+    parameter int ADDR_W   = 4,
+    parameter int DATA_W   = 64,
+    parameter int DEPTH    = 16,
+    parameter string INIT_FILE = ""   // optional .coe-style hex/bin memory image
+) (
+    input  logic [ADDR_W-1:0] a,
+    input  logic [DATA_W-1:0] d,
+    input  logic              clk,
+    input  logic              we,
+    output logic [DATA_W-1:0] spo
+);
+
+    logic [DATA_W-1:0] mem [0:DEPTH-1];
+
+    initial begin
+        for (int i = 0; i < DEPTH; i++)
+            mem[i] = '0;
+        if (INIT_FILE != "")
+            $readmemb(INIT_FILE, mem);
+    end
+
+    always_ff @(posedge clk) begin
+        if (we)
+            mem[a] <= d;
+    end
+
+    // Asynchronous (combinational) read
+    assign spo = mem[a];
+
+endmodule
+
+
+// --- Named wrappers -------------------------------------------------------
+// The RTL instantiates dist_mem_gen_0..3 by name. These wrappers let the
+// simulation bind to the models without editing RAM_IP_TOP.sv.
+
+module dist_mem_gen_0 (
+    input  logic [3:0]  a,
+    input  logic [63:0] d,
+    input  logic        clk,
+    input  logic        we,
+    output logic [63:0] spo
+);
+    dist_mem_gen_model u (.a(a), .d(d), .clk(clk), .we(we), .spo(spo));
+endmodule
+
+module dist_mem_gen_1 (
+    input  logic [3:0]  a,
+    input  logic [63:0] d,
+    input  logic        clk,
+    input  logic        we,
+    output logic [63:0] spo
+);
+    dist_mem_gen_model u (.a(a), .d(d), .clk(clk), .we(we), .spo(spo));
+endmodule
+
+module dist_mem_gen_2 (
+    input  logic [3:0]  a,
+    input  logic [63:0] d,
+    input  logic        clk,
+    input  logic        we,
+    output logic [63:0] spo
+);
+    dist_mem_gen_model u (.a(a), .d(d), .clk(clk), .we(we), .spo(spo));
+endmodule
+
+module dist_mem_gen_3 (
+    input  logic [3:0]  a,
+    input  logic [63:0] d,
+    input  logic        clk,
+    input  logic        we,
+    output logic [63:0] spo
+);
+    dist_mem_gen_model u (.a(a), .d(d), .clk(clk), .we(we), .spo(spo));
+endmodule

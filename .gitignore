@@ -20,6 +20,7 @@
 !tb/**/*.sv
 !constraints/**/*.xdc
 !scripts/**/*.tcl
+!scripts/**/*.sh
 !docs/**/*.md
 
 # --- explicit denials (defence in depth; these win over the allowlist) ------
@@ -59,6 +60,14 @@ ip/
 # Withheld pending confirmation that the data is not NDA-covered.
 # See README "What is deliberately not here".
 *.coe
+
+# Simulation working directories
+sim_work/
+build/
+*.vvp
+*.jou
+*.wdb
+xsim.dir/
 
 # OS / editor noise
 .DS_Store
