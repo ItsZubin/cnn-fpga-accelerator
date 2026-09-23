@@ -23,6 +23,11 @@
 !scripts/**/*.sh
 !docs/**/*.md
 
+# MATLAB verification/reference models and COE-generation scripts. The
+# scripts themselves are not NDA-sensitive; the memory-init data they
+# operate on (.coe, test images) stays excluded below.
+!MATLAB/**/*.m
+
 # Xilinx IP *source* definitions only. The .xci is the configuration Vivado
 # regenerates the core from -- it is stock Distributed Memory Generator setup,
 # not proprietary content. Generated output products stay excluded below.
