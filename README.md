@@ -15,7 +15,7 @@ at 100 MHz.
 | **Clock** | 100 MHz (10 ns), timing met, WNS **+0.168 ns** |
 | **Logic** | 1901 LUTs (3.00%), 558 FFs (0.44%) |
 | **Hard blocks** | **0 DSPs**, **0 BRAMs** |
-| **Language** | SystemVerilog (~1750 lines, 12 RTL modules) |
+| **Language** | SystemVerilog (12 RTL modules) |
 
 ---
 
