@@ -4,7 +4,7 @@ A hand-written CNN inference accelerator for the Digilent Nexys4 DDR
 (Xilinx Artix-7 `xc7a100tcsg324-1`), implemented in SystemVerilog.
 
 The network is a binary shape classifier: it takes a 64×64 black-and-white
-image and answers **square or circle** on a single output pin.
+image and answers **rectangle or circle** on a single output pin.
 
 Binarised activations and 4-bit signed weights let every multiply–accumulate
 collapse into a select-and-add, so **the whole network runs without a single
@@ -59,7 +59,7 @@ flowchart LR
     E["Max pooling<br/>4x4 grid of 15x15 tiles<br/>16 values"] --> F
     F["FC1<br/>16 -> 3<br/>48 weights + bias"] --> G
     G["FC2<br/>3 -> 1<br/>3 weights + bias"] --> H
-    H["1-bit output<br/>square / circle<br/>+ valid"]
+    H["1-bit output<br/>rectangle / circle<br/>+ valid"]
 ```
 
 Data flows as a valid-qualified stream between stages; each stage signals its
@@ -174,7 +174,7 @@ Every parameter in it matches the RTL exactly:
 
 | File | Role |
 |---|---|
-| `run_cnn.m` | Top-level model — conv → ReLU → max pool → FC, returns `"square"` / `"circle"` |
+| `run_cnn.m` | Top-level model — conv → ReLU → max pool → FC, returns `"rectangle"` / `"circle"` |
 | `convolve.m` | 4×4 valid correlation, cropped to the 61×61 region the RTL computes |
 | `relu.m`, `max_pool.m`, `fully_connect.m` | Per-layer reference implementations |
 | `cnn_test.m` | Sweeps a batch of test images and prints the classification |

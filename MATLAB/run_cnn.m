@@ -1,4 +1,4 @@
-function [is_square] = run_cnn(image)
+function [is_rectangle] = run_cnn(image)
     convolution_filter = [
         -3, -1,  1, -1;
          2, -2,  0,  0;
@@ -11,9 +11,9 @@ function [is_square] = run_cnn(image)
     max_pooled_image = max_pool(relu_activated_image);
     cnn_out = fully_connect(max_pooled_image);
     
-    is_square = "circle";
+    is_rectangle = "circle";
     if cnn_out > 0
-        is_square = "square";
+        is_rectangle = "rectangle";
     end
 end
 
