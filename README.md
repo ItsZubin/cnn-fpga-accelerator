@@ -3,6 +3,9 @@
 A hand-written CNN inference accelerator for the Digilent Nexys4 DDR
 (Xilinx Artix-7 `xc7a100tcsg324-1`), implemented in SystemVerilog.
 
+The network is a binary shape classifier: it takes a 64×64 black-and-white
+image and answers **square or circle** on a single output pin.
+
 Binarised activations and 4-bit signed weights let every multiply–accumulate
 collapse into a select-and-add, so **the whole network runs without a single
 DSP slice or Block RAM** — it fits in 3% of the fabric LUTs and closes timing
@@ -15,7 +18,8 @@ at 100 MHz.
 | **Clock** | 100 MHz (10 ns), timing met, WNS **+0.168 ns** |
 | **Logic** | 1901 LUTs (3.00%), 558 FFs (0.44%) |
 | **Hard blocks** | **0 DSPs**, **0 BRAMs** |
-| **Language** | SystemVerilog (~1750 lines, 12 RTL modules) |
+| **Network** | 64×64 binary image → 4×4 conv → ReLU → max pool → FC 16→3 → FC 3→1 |
+| **Language** | SystemVerilog — 1691 lines of RTL in 12 modules, 840 lines of testbench |
 
 ---
 
@@ -23,7 +27,7 @@ at 100 MHz.
 
 Activations are binarised to 1 bit and weights quantised to 4-bit signed. A
 multiply is therefore `pixel ? weight : 0` — a mux, not a multiplier — and the
-processing element reduces to a 4-input adder tree with saturation:
+processing element reduces to a 4-input adder tree:
 
 ```systemverilog
 window_bits = (start_pe && (count_PE <= 8'd60)) ? ifmap[count_PE +: 4] : 4'b0;
@@ -34,9 +38,13 @@ mult3 = window_bits[3] ? weights[3] : 8'sd0;
 acc_sum = mult0 + mult1 + mult2 + mult3;
 ```
 
-All 240 DSP slices and all 135 BRAMs on the device stay free. Weight and
-feature-map storage uses LUT-based distributed RAM (256 LUTs configured as
-memory), leaving the hard blocks available for whatever else shares the chip.
+Four 4-bit signed weights sum to at most `4 × [-8, 7] = [-32, 28]`, which is
+why the 8-bit accumulator needs no saturation logic — the range cannot
+overflow it.
+
+All 240 DSP slices and all 135 BRAMs on the device stay free. Feature-map
+storage uses LUT-based distributed RAM (256 LUTs configured as memory),
+leaving the hard blocks available for whatever else shares the chip.
 
 ---
 
@@ -44,36 +52,72 @@ memory), leaving the hard blocks available for whatever else shares the chip.
 
 ```mermaid
 flowchart LR
-    A["8x8 binarised<br/>input feature map<br/>(4x distributed RAM)"] --> B
-    B["Convolution<br/>4 parallel PEs<br/>2x2 kernel, 4-bit signed w"] --> C
+    A["64x64 binarised image<br/>4x distributed RAM<br/>16 words x 64-bit rows"] --> B
+    B["Convolution<br/>4x4 kernel, 4-bit signed w<br/>4 parallel PEs, 61x61 positions"] --> C
     C["Accumulator<br/>sign-magnitude sum<br/>clipped to 4-bit signed"] --> D
-    D["ReLU<br/>-> 4-bit"] --> E
-    E["Max pooling<br/>2x2 -> 16 values"] --> F
-    F["FC1<br/>16 -> 3<br/>48 weights"] --> G
-    G["FC2<br/>3 -> 1<br/>3 weights"] --> H
-    H["1-bit output<br/>+ valid"]
+    D["ReLU<br/>4-bit"] --> E
+    E["Max pooling<br/>4x4 grid of 15x15 tiles<br/>16 values"] --> F
+    F["FC1<br/>16 -> 3<br/>48 weights + bias"] --> G
+    G["FC2<br/>3 -> 1<br/>3 weights + bias"] --> H
+    H["1-bit output<br/>square / circle<br/>+ valid"]
 ```
 
 Data flows as a valid-qualified stream between stages; each stage signals its
 successor rather than running off a global schedule.
 
+### How the 4×4 window is fed
+
+The image is stored row-interleaved across the four distributed RAMs: row `r`
+lives in RAM `r mod 4` at address `r div 4`, so 4 RAMs × 16 words covers all
+64 rows. Each RAM word is one full 64-pixel row.
+
+On every vertical step `CONV_Controller` drives `count_def = v_pos[1:0]`, and
+`RAM_IP_TOP` barrel-rotates its four outputs by that amount. The four PEs
+therefore always see rows `r, r+1, r+2, r+3` in order, whichever RAM each one
+physically came from. Each PE slices 4 horizontally-adjacent pixels with
+`ifmap[count_PE +: 4]`, so the four PEs together cover a **4×4 window**, and
+the 16 filter taps are split 4-per-PE.
+
+Sweeping `count_PE` 0…60 horizontally and `v_pos` 0…60 vertically gives the
+61×61 valid-convolution output of a 4×4 kernel on a 64×64 image.
+
 ### Modules
 
 | File | Role |
 |---|---|
-| `rtl/PE.sv` | Processing element — 4-tap MAC, 1-bit activations x 4-bit signed weights, registered 8-bit signed result |
-| `rtl/PE_TOP.sv` | Four PEs in parallel with shared window addressing |
-| `rtl/Acc.sv` | Partial-sum accumulation across sliding-window positions |
-| `rtl/CONV_Controller.sv` | Convolution sequencing — window position, memory addressing, handshakes |
-| `rtl/conv_top.sv` | Convolution stage: PEs + accumulator + ReLU + memory glue |
-| `rtl/RELU_v1.sv` | ReLU, 8-bit signed to 4-bit unsigned |
-| `rtl/Pooling_TOP.sv` | 2x2 max pooling, streaming, 4-value row registers |
-| `rtl/FC_TOP.sv` | Both fully-connected layers, weight shift-in, 16-value input buffer |
-| `rtl/RAM_IP_TOP.sv` | Wrapper around four 16x64 distributed-RAM instances |
-| `rtl/network_top.sv` | Wires conv -> pool -> FC into the network datapath |
-| `rtl/top.sv` | Board-level top: start-pulse FSM, output registering |
-| `rtl/top_initialize.sv` | Weight/feature-map load sequencing at reset |
+| `rtl/PE.sv` | Processing element — 4-tap MAC, 1-bit activations × 4-bit signed weights, registered 8-bit signed result |
+| `rtl/PE_TOP.sv` | Four PEs in parallel; holds the 16 conv weights and distributes 4 to each PE |
+| `rtl/Acc.sv` | Sums the four PE partial sums in sign-magnitude form, clips to 4-bit signed |
+| `rtl/CONV_Controller.sv` | Convolution sequencing — window position, RAM addressing, rotation phase, handshakes |
+| `rtl/conv_top.sv` | Convolution stage: controller + RAM + PEs + accumulator + ReLU |
+| `rtl/RELU_v1.sv` | ReLU — 4-bit signed in, 4-bit unsigned out; also instantiated ×3 inside `FC_TOP` |
+| `rtl/Pooling_TOP.sv` | Streaming max pooling into 4 bins × 15 rows → 16 values per frame |
+| `rtl/FC_TOP.sv` | Both fully-connected layers, weight shift-in, 16-value input buffer, biases |
+| `rtl/RAM_IP_TOP.sv` | Four 16×64 distributed-RAM instances plus the barrel rotation described above |
+| `rtl/network_top.sv` | Wires conv → pool → FC into the network datapath |
+| `rtl/top.sv` | Board-level top: start-pulse FSM, output latching |
+| `rtl/top_initialize.sv` | Weight ROMs and the load FSMs that shift them into the datapath at start |
 | `tb/` | Five self-checking testbenches + behavioural RAM models — see *Verification* |
+| `MATLAB/` | Golden reference model of the same network — see *MATLAB reference model* |
+
+### Where the weights live
+
+All trained parameters are **hardcoded in the RTL**, not loaded from external
+files:
+
+| Parameter | Count | Location |
+|---|---|---|
+| Conv filter | 16 (4×4) | `rom_mem_fin` in `top_initialize.sv` |
+| FC1 weights | 48 (3 × 4×4) | `rom_mem_fc1` in `top_initialize.sv` |
+| FC2 weights | 3 | `rom_mem_fc2` in `top_initialize.sv` |
+| FC1 biases | 3 (−12, +20, +24) | constants in `FC_TOP.sv` |
+| FC2 bias | 1 (+6) | constant in `FC_TOP.sv` |
+
+`top_initialize.sv` shifts them into `PE_TOP` and `FC_TOP` over a nibble-wide
+bus at start-up, then pulses `start_read` to begin inference.
+
+The only thing loaded from `.coe` files is the **input image** — see
+*IP cores* below.
 
 ---
 
@@ -113,6 +157,34 @@ meaningfully past 100 MHz would need that path pipelined.
 
 ---
 
+## MATLAB reference model
+
+`MATLAB/` holds the model the hardware was written against — the algorithm
+expressed directly, with no notion of cycles, memory layout or bit widths.
+Every parameter in it matches the RTL exactly:
+
+| MATLAB | RTL | Agrees |
+|---|---|---|
+| `run_cnn.m` 4×4 `convolution_filter` | `rom_mem_fin` (`top_initialize.sv`) | ✅ all 16 taps |
+| `fully_connect.m` `fc_filter1..3` | `rom_mem_fc1` | ✅ all 48 weights |
+| `fully_connect.m` `fc_filter4` | `rom_mem_fc2` | ✅ `[-8 7 7]` |
+| Biases `−12, +20, +24`, `+6` | constants in `FC_TOP.sv` | ✅ |
+| `convolve.m` crop to 61×61 | `h_pos`/`v_pos` sweep 0…60 | ✅ |
+| `max_pool.m` 4 tiles × 15 px | `Pooling_TOP` 4 bins × 15 rows | ⚠️ see below |
+
+| File | Role |
+|---|---|
+| `run_cnn.m` | Top-level model — conv → ReLU → max pool → FC, returns `"square"` / `"circle"` |
+| `convolve.m` | 4×4 valid correlation, cropped to the 61×61 region the RTL computes |
+| `relu.m`, `max_pool.m`, `fully_connect.m` | Per-layer reference implementations |
+| `cnn_test.m` | Sweeps a batch of test images and prints the classification |
+| `coe_script_matlab.m`, `image_to_coe.m` | Convert a PNG into the `.coe` memory-initialisation format Vivado loads into the distributed RAMs |
+
+The test images (`MATLAB/Images/`) are not committed — see *What is
+deliberately not here*. The scripts expect them at `Images/imgTst/`.
+
+---
+
 ## Verification
 
 Five self-checking testbenches. Each compares the DUT against an independent
@@ -139,25 +211,33 @@ without the `.coe` files the real cores expect.
 
 ### What is still not proven
 
-`tb_top.sv` deliberately does **not** check the classification result. The
-trained weights and test images live in the `.coe` files, which are not in this
-repository, so there is nothing to infer on and no golden output to compare
-against. Numerical end-to-end correctness is therefore still open, and is the
-top roadmap item.
+The unit testbenches check each stage against its own reference, and the
+MATLAB model gives a trusted whole-network reference — but **the two have not
+been joined up**. `tb_top.sv` checks protocol and liveness only; it does not
+compare the classification bit against `run_cnn.m`.
+
+Closing that gap needs the test images (not committed) driven into both the
+RTL and the MATLAB model, and the output bits compared. That is the top
+roadmap item.
+
+One known difference to resolve when it is done: `run_cnn.m` classifies on
+`cnn_out > 0`, while `FC_TOP.sv` decides on `fc2_acc >= 0`. The two disagree
+on exactly one input — an accumulator result of zero.
 
 ### Known issue: pooling bin boundaries
 
-`tb_pooling.sv` documents a discrepancy it found in `Pooling_TOP`. The four
-accumulation bins are not uniform:
+`tb_pooling.sv` documents a discrepancy it found in `Pooling_TOP`. The
+reference (`max_pool.m`) tiles the 61×61 feature map into 4 × 4 tiles of
+**15 × 15** each. The RTL's four accumulation bins are not uniform:
 
-| Bin | Accumulates `count_PE` | Positions | Emitted at |
-|---|---|---|---|
-| 1 | 0–15 | 16 | 16 |
-| 2 | 16–30 | 15 | 32 |
-| 3 | 31–45 | 15 | 48 |
-| 4 | 46–60 | 15 | 60 |
+| Bin | Accumulates `count_PE` | Positions | Emitted at | Reference wants |
+|---|---|---|---|---|
+| 1 | 0–15 | 16 | 16 | 15 |
+| 2 | 16–30 | 15 | 32 | 15 |
+| 3 | 31–45 | 15 | 48 | 15 |
+| 4 | 46–60 | 15 | 60 | 15 |
 
-Bin 1 covers one more position than the others, and bins 2 and 3 stop
+Bin 1 covers one position more than the reference tile, and bins 2 and 3 stop
 accumulating well before the point at which they are emitted — so positions 31
 and 32 fall into bin 3 even though bin 2 has not yet been read out. The RTL
 also writes bin 4's lower bound as `>= 45` while bin 3 already claims 45; the
@@ -165,9 +245,9 @@ also writes bin 4's lower bound as `>= 45` while bin 3 already claims 45; the
 double-counted, but it looks like a typo for 46.
 
 The testbench encodes the behaviour **as implemented**, so it passes and works
-as a regression test, and raises warnings pointing at the boundaries. If the
-intent was uniform 2×2 pooling, the RTL needs a fix and the testbench
-parameters need to follow.
+as a regression test, and raises warnings pointing at the boundaries. Matching
+the MATLAB tiling needs an RTL fix and a matching parameter change in the
+testbench.
 
 ---
 
@@ -191,11 +271,12 @@ width 64**. Vivado regenerates the cores from these `.xci` files on first
 build; the generated output products are not committed, since they are
 derived and embed build-machine paths.
 
-Each core is initialised from a `.coe` memory-initialisation file
-(`img_00026_ram0..3.coe`). **Those files are not in this repository** — see
-below — so IP generation will report a missing coefficient file until they are
-supplied. Point each core at your own `.coe`, or clear the initialisation
-field to build with zeroed memory.
+Each core is initialised from a `.coe` file holding a quarter of the input
+image's rows (`img_00026_ram0..3.coe`). **Those files are not in this
+repository** — see below — so IP generation will report a missing coefficient
+file until they are supplied. Generate your own from any 64×64 binary PNG with
+`MATLAB/image_to_coe.m`, or clear the initialisation field to build with
+zeroed memory.
 
 ---
 
@@ -208,21 +289,25 @@ has been explicitly allowed:
   files, and they embed build-machine paths.
 - **The Vivado project, run and simulation directories** — these embed
   absolute filesystem paths and the originating account ID.
-- **`.coe` memory-initialisation files** — the trained weights and test
-  images. Without them the design builds but has nothing to infer on, and IP
-  generation will flag the missing coefficient files.
+- **`.coe` files and the test-image set** (`MATLAB/Images/`) — the input data
+  the design infers on. The trained weights are *not* affected: they live in
+  the RTL ROMs and are fully present. Without the images the design builds and
+  runs, but has nothing meaningful to classify, and IP generation will flag the
+  missing coefficient files.
 
 ---
 
 ## Roadmap
 
-- [ ] **End-to-end golden reference** — behavioural model of the quantised
-      network, compared against the hardware output bit (needs the `.coe` data)
-- [ ] Resolve the pooling bin boundaries documented above
+- [ ] **End-to-end check against the MATLAB model** — drive the same images
+      through `run_cnn.m` and the RTL, compare the output bit (needs the image
+      set)
+- [ ] Reconcile the `>= 0` / `> 0` decision threshold between RTL and model
+- [ ] Align the pooling bin boundaries with the 15×15 reference tiling
 - [ ] Constrain `output_ext` / `valid_output_ext` to real pins (currently
       auto-placed by the tool)
 - [ ] Pipeline the accumulator critical path to lift the 100 MHz ceiling
-- [ ] Publish the training / quantisation flow that produces the `.coe` files
+- [ ] Publish the training / quantisation flow that produced the weights
 - [ ] Report measured throughput in inferences/sec
 
 ---

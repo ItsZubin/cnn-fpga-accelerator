@@ -17,10 +17,11 @@
 //   bin 3 : count_PE 31..45   (15 positions)   emitted at count_PE == 48
 //   bin 4 : count_PE 46..60   (15 positions)   emitted at count_PE == 60
 //
-// Two things follow. First, bin 1 covers one more position than the others.
-// Second, positions 31 and 32 are folded into bin 3 even though bin 2 is not
-// emitted until position 32, so a 2x2 pooling grid over a uniform feature map
-// is not what this computes.
+// The reference model (MATLAB/max_pool.m) tiles the 61x61 feature map into a
+// 4x4 grid of uniform 15x15 tiles. Two things follow. First, bin 1 covers one
+// more position than that reference tile. Second, positions 31 and 32 are
+// folded into bin 3 even though bin 2 is not emitted until position 32, so
+// uniform tiling is not what this computes.
 //
 // The RTL also writes `count_PE >= 8'd45 && count_PE < 8'd61` for bin 4 while
 // bin 3 already claims 45. The if/else-if chain resolves that in favour of
@@ -29,9 +30,9 @@
 //
 // This testbench encodes the behaviour as implemented so it works as a
 // regression test, and raises an explicit warning about the boundaries so the
-// discrepancy is visible rather than silently locked in. If the intended
-// geometry is uniform 2x2 pooling, the RTL needs changing and the parameters
-// below need updating to match.
+// discrepancy is visible rather than silently locked in. To match the
+// reference's uniform 15x15 tiling, the RTL needs changing and the parameters
+// below need updating to follow.
 // ---------------------------------------------------------------------------
 
 `timescale 1ns/1ps
