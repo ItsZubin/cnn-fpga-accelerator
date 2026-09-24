@@ -220,9 +220,9 @@ Closing that gap needs the test images (not committed) driven into both the
 RTL and the MATLAB model, and the output bits compared. That is the top
 roadmap item.
 
-One known difference to resolve when it is done: `run_cnn.m` classifies on
-`cnn_out > 0`, while `FC_TOP.sv` decides on `fc2_acc >= 0`. The two disagree
-on exactly one input — an accumulator result of zero.
+`FC_TOP.sv`'s decision threshold (`fc2_acc > 16'sd0`) now matches `run_cnn.m`'s
+(`cnn_out > 0`) exactly — the two used to disagree on an accumulator result of
+zero, which is fixed.
 
 ### Known issue: pooling bin boundaries
 
@@ -302,7 +302,6 @@ has been explicitly allowed:
 - [ ] **End-to-end check against the MATLAB model** — drive the same images
       through `run_cnn.m` and the RTL, compare the output bit (needs the image
       set)
-- [ ] Reconcile the `>= 0` / `> 0` decision threshold between RTL and model
 - [ ] Align the pooling bin boundaries with the 15×15 reference tiling
 - [ ] Constrain `output_ext` / `valid_output_ext` to real pins (currently
       auto-placed by the tool)

@@ -226,7 +226,7 @@ module FC_TOP (
                 fc2_computing_next = 1'b0;
                 
                 // Decision logic
-                if (fc2_acc >= 16'sd0) 
+                if (fc2_acc > 16'sd0)
                     fc_output_next = 1'b1;
                 else 
                     fc_output_next = 1'b0;
